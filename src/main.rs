@@ -126,6 +126,12 @@ fn worktree_path(branch: &str) -> PathBuf {
     worktree_root().join(project_name()).join(branch)
 }
 
+/// The repository's main worktree (parent of the shared git common dir).
+fn main_worktree() -> Option<PathBuf> {
+    let common = git_capture(&["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    Path::new(&common).parent().map(Path::to_path_buf)
+}
+
 /// A process-random u64, seeded by the OS via the default hasher's keys.
 fn random_u64() -> u64 {
     let mut h = RandomState::new().build_hasher();
@@ -334,17 +340,38 @@ fn cmd_branches() {
 
 fn cmd_remove(args: &[String]) {
     let force = args.iter().any(|a| a == "-f" || a == "--force");
-    let branch = args
-        .iter()
-        .find(|a| !a.starts_with('-'))
-        .unwrap_or_else(|| die("remove: missing branch name"));
-    let path = worktree_path(branch);
+    let branch = args.iter().find(|a| !a.starts_with('-'));
+
+    // With a branch, remove that worktree. Without one, remove the worktree we
+    // are currently standing in and report the main worktree as the place for
+    // the shell wrapper to cd into afterward.
+    let (path, land) = match branch {
+        Some(b) => (worktree_path(b), None),
+        None => {
+            let here = PathBuf::from(repo_toplevel());
+            let main = main_worktree().unwrap_or_else(|| die("remove: cannot locate main worktree"));
+            if here == main {
+                die("remove: already in the main worktree; nothing to remove");
+            }
+            (here, Some(main))
+        }
+    };
+
     if !path.exists() {
         die(format!("remove: no worktree at {}", path.display()));
     }
 
-    let path_str = path.to_string_lossy();
-    let mut git_args = vec!["worktree", "remove"];
+    let path_str = path.to_string_lossy().into_owned();
+    // Run git from the landing dir so removing the current worktree is safe.
+    let land_str = land.as_ref().map(|p| p.to_string_lossy().into_owned());
+
+    let mut git_args: Vec<&str> = Vec::new();
+    if let Some(dir) = land_str.as_deref() {
+        git_args.push("-C");
+        git_args.push(dir);
+    }
+    git_args.push("worktree");
+    git_args.push("remove");
     if force {
         // `--force` lets git remove a worktree with uncommitted changes.
         git_args.push("--force");
@@ -354,7 +381,13 @@ fn cmd_remove(args: &[String]) {
     if !git_run(&git_args) {
         die("remove: git worktree remove failed (use --force to discard changes)");
     }
-    println!("removed {}", path.display());
+
+    // Confirmation goes to stderr; only a cd target (if any) goes to stdout so
+    // the shell wrapper can move out of the directory it just deleted.
+    eprintln!("warden: removed {}", path.display());
+    if let Some(dir) = land {
+        println!("{}", dir.display());
+    }
 }
 
 /// Shell integration: a wrapper function so `new`/`cd` change the calling
@@ -362,7 +395,9 @@ fn cmd_remove(args: &[String]) {
 /// (zsh and bash). Printed verbatim, so shell braces need no escaping.
 const SHELL_INIT: &str = r#"warden() {
 	case "${1:-}" in
-		new|n|cd)
+		new|n|cd|rm|remove)
+			# These may print a directory on stdout (a new/target worktree, or
+			# the main worktree after removing the current one) — cd into it.
 			local _w_dir
 			_w_dir="$(command warden "$@")" || return
 			[ -n "$_w_dir" ] && cd "$_w_dir"
@@ -420,8 +455,9 @@ Commands:
                       (a tree name is generated when no branch is given)
   cd     <branch>     Change to the worktree directory for <branch>
   list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
-  remove|rm <branch>  Remove the worktree for <branch> (-f/--force if dirty)
-  shell-init          Print shell integration to enable `new`/`cd` directory changes
+  remove|rm [branch]  Remove the worktree for <branch>, or the current one if
+                      omitted (-f/--force to discard uncommitted changes)
+  shell-init          Print shell integration (directory changes + completion)
 
 Environment:
   WT_ROOT   Worktree root directory (default: ~/.worktrees)

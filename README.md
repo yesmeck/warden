@@ -24,7 +24,8 @@ warden <command> [args]
                       is generated if you omit <branch>)
   cd     <branch>     Change to the worktree directory for <branch>
   list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
-  remove|rm <branch>  Remove the worktree for <branch>
+  remove|rm [branch]  Remove the worktree for <branch>, or the current one if
+                      omitted (-f/--force to discard uncommitted changes)
   shell-init          Print shell integration to enable `new`/`cd` directory changes
 ```
 
