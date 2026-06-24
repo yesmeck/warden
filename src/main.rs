@@ -5,6 +5,7 @@
 //!   cd        <branch>   Print the worktree path for <branch>
 //!   list|ls              List worktrees for the current repository
 //!   remove|rm <branch>   Remove the worktree for <branch>
+//!   pr        [branch]   Show the GitHub pull request for a branch (via `gh`)
 //!   shell-init           Print shell integration so `new`/`cd` change directory
 //!
 //! To make `new` and `cd` change your shell's directory, add to your rc:
@@ -419,6 +420,41 @@ fn cmd_remove(args: &[String]) {
     }
 }
 
+/// True if the GitHub CLI (`gh`) is available on PATH.
+fn have_gh() -> bool {
+    Command::new("gh")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Show the GitHub pull request for the current (or given) branch.
+///
+/// We lean on `gh pr view`, which already maps a branch to its PR and renders
+/// the full status (state, reviews, checks). Any extra args are forwarded, so
+/// a branch name or flags like `--web`/`--json` just work; with none, `gh`
+/// uses the branch checked out in the current worktree.
+fn cmd_pr(args: &[String]) {
+    repo_toplevel(); // fail clearly if we're not in a repo
+    if !have_gh() {
+        die("pr: GitHub CLI 'gh' not found; install it from https://cli.github.com");
+    }
+
+    let mut gh_args: Vec<&str> = vec!["pr", "view"];
+    gh_args.extend(args.iter().map(String::as_str));
+
+    match Command::new("gh").args(&gh_args).status() {
+        Ok(s) if s.success() => {}
+        // Propagate gh's own exit code (e.g. when no PR exists for the branch);
+        // gh has already printed an explanatory message to stderr.
+        Ok(s) => std::process::exit(s.code().unwrap_or(1)),
+        Err(e) => die(format!("pr: failed to run gh: {e}")),
+    }
+}
+
 /// Shell integration: a wrapper function so `new`/`cd` change the calling
 /// shell's directory, plus tab-completion for subcommands and branch names
 /// (zsh and bash). Printed verbatim, so shell braces need no escaping.
@@ -440,13 +476,13 @@ const SHELL_INIT: &str = r#"warden() {
 if [ -n "${ZSH_VERSION:-}" ]; then
 	_warden() {
 		local -a _subs _branches
-		_subs=(new n cd list ls remove rm shell-init help)
+		_subs=(new n cd list ls remove rm pr shell-init help)
 		if (( CURRENT == 2 )); then
 			compadd -a _subs
 			return 0
 		fi
 		case ${words[2]} in
-			cd|rm|remove)
+			cd|rm|remove|pr)
 				_branches=(${(f)"$(command warden __branches 2>/dev/null)"})
 				compadd -a _branches
 				# Return success even with no matches so zsh does not fall
@@ -474,11 +510,11 @@ elif [ -n "${BASH_VERSION:-}" ]; then
 	_warden_bash() {
 		local cur="${COMP_WORDS[COMP_CWORD]}"
 		if [ "$COMP_CWORD" -eq 1 ]; then
-			COMPREPLY=( $(compgen -W "new n cd list ls remove rm shell-init help" -- "$cur") )
+			COMPREPLY=( $(compgen -W "new n cd list ls remove rm pr shell-init help" -- "$cur") )
 			return
 		fi
 		case "${COMP_WORDS[1]}" in
-			rm|remove|cd)
+			rm|remove|cd|pr)
 				COMPREPLY=( $(compgen -W "$(command warden __branches 2>/dev/null)" -- "$cur") )
 				;;
 		esac
@@ -503,6 +539,8 @@ Commands:
   list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
   remove|rm [branch]  Remove the worktree for <branch>, or the current one if
                       omitted (-f/--force to discard uncommitted changes)
+  pr        [branch]  Show the GitHub pull request for <branch> (current branch
+                      if omitted) via `gh`; extra flags pass through to gh
   shell-init          Print shell integration (directory changes + completion)
 
 Environment:
@@ -527,6 +565,7 @@ fn main() -> ExitCode {
         "cd" => cmd_cd(rest),
         "list" | "ls" => cmd_list(rest),
         "remove" | "rm" => cmd_remove(rest),
+        "pr" => cmd_pr(rest),
         "shell-init" => cmd_shell_init(),
         "__branches" => cmd_branches(),
         "-h" | "--help" | "help" => usage(),
