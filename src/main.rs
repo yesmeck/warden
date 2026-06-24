@@ -17,6 +17,7 @@ use std::hash::{BuildHasher, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
+use std::time::{Duration, SystemTime};
 
 /// Tree names used to mint a random branch when `new` is called without one.
 const TREES: &[&str] = &[
@@ -224,11 +225,86 @@ fn cmd_cd(args: &[String]) {
     println!("{}", path.display());
 }
 
+/// Age of a path from its filesystem creation time, if available.
+fn created_age(path: &str) -> Option<Duration> {
+    let created = std::fs::metadata(path).ok()?.created().ok()?;
+    SystemTime::now().duration_since(created).ok()
+}
+
+/// Render a duration as a coarse, git-style relative age ("3 days ago").
+fn humanize_age(d: Duration) -> String {
+    const MIN: u64 = 60;
+    const HOUR: u64 = 60 * MIN;
+    const DAY: u64 = 24 * HOUR;
+    const WEEK: u64 = 7 * DAY;
+    const MONTH: u64 = 30 * DAY;
+    const YEAR: u64 = 365 * DAY;
+
+    let s = d.as_secs();
+    let (n, unit) = if s < MIN {
+        return "just now".to_string();
+    } else if s < HOUR {
+        (s / MIN, "minute")
+    } else if s < DAY {
+        (s / HOUR, "hour")
+    } else if s < WEEK {
+        (s / DAY, "day")
+    } else if s < MONTH {
+        (s / WEEK, "week")
+    } else if s < YEAR {
+        (s / MONTH, "month")
+    } else {
+        (s / YEAR, "year")
+    };
+    format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
+}
+
 fn cmd_list() {
     // Restrict to the current repository (and fail clearly if not in one).
     repo_toplevel();
-    if !git_run(&["worktree", "list"]) {
-        die("list: git worktree list failed");
+    let raw = git_capture(&["worktree", "list", "--porcelain"])
+        .unwrap_or_else(|| die("list: git worktree list failed"));
+
+    // Parse the porcelain blocks into (path, short-sha, label) rows.
+    let mut rows: Vec<(String, String, String, String)> = Vec::new();
+    let mut path = String::new();
+    let mut sha = String::new();
+    let mut label = String::new();
+    let mut flush = |path: &mut String, sha: &mut String, label: &mut String| {
+        if path.is_empty() {
+            return;
+        }
+        let age = created_age(path).map(humanize_age).unwrap_or_else(|| "?".to_string());
+        rows.push((
+            std::mem::take(path),
+            std::mem::take(sha),
+            std::mem::take(label),
+            age,
+        ));
+    };
+
+    for line in raw.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            flush(&mut path, &mut sha, &mut label);
+            path = p.to_string();
+        } else if let Some(h) = line.strip_prefix("HEAD ") {
+            sha = h.chars().take(8).collect();
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            let name = b.strip_prefix("refs/heads/").unwrap_or(b);
+            label = format!("[{name}]");
+        } else if line == "detached" {
+            label = "(detached HEAD)".to_string();
+        } else if line == "bare" {
+            label = "(bare)".to_string();
+        }
+    }
+    flush(&mut path, &mut sha, &mut label);
+
+    // Align the path and label columns; append the relative age.
+    let path_w = rows.iter().map(|r| r.0.len()).max().unwrap_or(0);
+    let label_w = rows.iter().map(|r| r.2.len()).max().unwrap_or(0);
+    for (path, sha, label, age) in &rows {
+        println!("{path:<path_w$}  {sha}  {label:<label_w$}  {age}");
     }
 }
 

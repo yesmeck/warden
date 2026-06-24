@@ -23,7 +23,8 @@ warden <command> [args]
                       (a random <adjective>-<tree> name, e.g. misty-cedar,
                       is generated if you omit <branch>)
   cd     <branch>     Change to the worktree directory for <branch>
-  list|ls             List worktrees for the current repository
+  list|ls             List worktrees for the current repository, with the
+                      branch and how long ago each was created
   remove|rm <branch>  Remove the worktree for <branch>
   shell-init          Print shell integration to enable `new`/`cd` directory changes
 ```
