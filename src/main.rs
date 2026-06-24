@@ -10,10 +10,21 @@
 //! To make `new` and `cd` change your shell's directory, add to your rc:
 //!   eval "$(warden shell-init)"
 
+use std::collections::hash_map::RandomState;
 use std::env;
+use std::hash::{BuildHasher, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
+
+/// Tree names used to mint a random branch when `new` is called without one.
+const TREES: &[&str] = &[
+    "oak", "birch", "cedar", "maple", "willow", "aspen", "alder", "beech", "elm", "fir", "hazel",
+    "juniper", "larch", "linden", "pine", "poplar", "rowan", "spruce", "sycamore", "walnut", "yew",
+    "ash", "hawthorn", "hickory", "magnolia", "redwood", "sequoia", "cypress", "dogwood", "hemlock",
+    "ironwood", "mahogany", "mangrove", "mulberry", "olive", "teak", "banyan", "baobab", "cherry",
+    "chestnut", "ebony", "ginkgo", "holly", "laurel", "myrtle", "sandalwood",
+];
 
 /// Print an error to stderr and exit non-zero.
 fn die(msg: impl AsRef<str>) -> ! {
@@ -105,8 +116,43 @@ fn worktree_path(branch: &str) -> PathBuf {
     worktree_root().join(project_name()).join(branch)
 }
 
+/// A process-random u64, seeded by the OS via the default hasher's keys.
+fn random_u64() -> u64 {
+    let mut h = RandomState::new().build_hasher();
+    h.write_u8(0);
+    h.finish()
+}
+
+/// Mint a branch name from a tree, avoiding existing branches and worktrees.
+/// Falls back to a `<tree>-<hex>` suffix once the bare names are exhausted.
+fn generate_branch() -> String {
+    for attempt in 0..64 {
+        let tree = TREES[(random_u64() as usize) % TREES.len()];
+        let candidate = if attempt < TREES.len() {
+            tree.to_string()
+        } else {
+            format!("{tree}-{:04x}", random_u64() & 0xffff)
+        };
+        let branch_ref = format!("refs/heads/{candidate}");
+        let taken = git_check(&["show-ref", "--verify", "--quiet", &branch_ref])
+            || worktree_path(&candidate).exists();
+        if !taken {
+            return candidate;
+        }
+    }
+    format!("tree-{:08x}", random_u64() as u32)
+}
+
 fn cmd_new(args: &[String]) {
-    let branch = args.first().unwrap_or_else(|| die("new: missing branch name"));
+    let branch = match args.first() {
+        Some(b) => b.clone(),
+        None => {
+            let b = generate_branch();
+            eprintln!("warden: no branch given, using '{b}'");
+            b
+        }
+    };
+    let branch = branch.as_str();
     let path = worktree_path(branch);
 
     if path.exists() {
@@ -191,7 +237,8 @@ fn usage() {
         r#"Usage: warden <command> [args]
 
 Commands:
-  new|n  <branch>     Create a worktree at <root>/<project>/<branch>
+  new|n  [branch]     Create a worktree at <root>/<project>/<branch>
+                      (a tree name is generated when no branch is given)
   cd     <branch>     Change to the worktree directory for <branch>
   list|ls             List worktrees for the current repository
   remove|rm <branch>  Remove the worktree for <branch>
