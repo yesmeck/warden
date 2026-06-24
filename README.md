@@ -22,7 +22,8 @@ warden <command> [args]
   new|n  [branch]     Create a worktree at <root>/<project>/<branch>
                       (a random <adjective>-<tree> name, e.g. misty-cedar,
                       is generated if you omit <branch>)
-  cd     <branch>     Change to the worktree directory for <branch>
+  cd     [branch]     Change to the worktree for <branch> (any worktree,
+                      including main); with no branch, go to the main worktree
   list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
   remove|rm [branch]  Remove the worktree for <branch>, or the current one if
                       omitted (-f/--force to discard uncommitted changes)
@@ -40,12 +41,6 @@ eval "$(warden shell-init)"
 
 This also installs tab-completion (zsh and bash): subcommands complete at the
 first position, and `rm`/`cd` complete the current repo's worktree branches.
-
-If you miss typing `wt`, alias it:
-
-```sh
-alias wt=warden
-```
 
 ## Environment
 

@@ -222,13 +222,47 @@ fn cmd_new(args: &[String]) {
     println!("{path_str}");
 }
 
-fn cmd_cd(args: &[String]) {
-    let branch = args.first().unwrap_or_else(|| die("cd: missing branch name"));
-    let path = worktree_path(branch);
-    if !path.is_dir() {
-        die(format!("cd: no worktree at {}", path.display()));
+/// Path of the worktree currently checked out on `branch`, if any. Covers the
+/// main worktree and any linked worktree, wherever it lives.
+fn worktree_for_branch(branch: &str) -> Option<String> {
+    let raw = git_capture(&["worktree", "list", "--porcelain"])?;
+    let mut current: Option<String> = None;
+    for line in raw.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            current = Some(p.to_string());
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            let name = b.strip_prefix("refs/heads/").unwrap_or(b);
+            if name == branch {
+                return current;
+            }
+        }
     }
-    println!("{}", path.display());
+    None
+}
+
+fn cmd_cd(args: &[String]) {
+    // No branch: jump to the main worktree.
+    let Some(branch) = args.first() else {
+        repo_toplevel(); // fail clearly if we're not in a repo
+        let main = main_worktree().unwrap_or_else(|| die("cd: cannot locate main worktree"));
+        println!("{}", main.display());
+        return;
+    };
+
+    // Prefer the worktree actually checked out on this branch (incl. main).
+    if let Some(path) = worktree_for_branch(branch) {
+        println!("{path}");
+        return;
+    }
+
+    // Fall back to the conventional warden path for this branch.
+    let path = worktree_path(branch);
+    if path.is_dir() {
+        println!("{}", path.display());
+        return;
+    }
+
+    die(format!("cd: no worktree for branch '{branch}'"));
 }
 
 /// Age of a path from its filesystem creation time, if available.
@@ -320,20 +354,15 @@ fn cmd_list(args: &[String]) {
     }
 }
 
-/// Print the branch names of this project's worktrees, one per line.
-/// These are exactly the valid targets for `rm` and `cd`; used by the shell
-/// completion emitted by `shell-init`.
+/// Print the branch name of every worktree (including main), one per line.
+/// Used by the `rm`/`cd` shell completion emitted by `shell-init`.
 fn cmd_branches() {
-    let base = worktree_root().join(project_name());
-    let prefix = format!("{}/", base.to_string_lossy());
     let Some(raw) = git_capture(&["worktree", "list", "--porcelain"]) else {
         return;
     };
     for line in raw.lines() {
-        if let Some(p) = line.strip_prefix("worktree ") {
-            if let Some(branch) = p.strip_prefix(&prefix).filter(|s| !s.is_empty()) {
-                println!("{branch}");
-            }
+        if let Some(b) = line.strip_prefix("branch ") {
+            println!("{}", b.strip_prefix("refs/heads/").unwrap_or(b));
         }
     }
 }
@@ -453,7 +482,8 @@ fn usage() {
 Commands:
   new|n  [branch]     Create a worktree at <root>/<project>/<branch>
                       (a tree name is generated when no branch is given)
-  cd     <branch>     Change to the worktree directory for <branch>
+  cd     [branch]     Change to the worktree for <branch> (any worktree,
+                      including main); with no branch, go to the main worktree
   list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
   remove|rm [branch]  Remove the worktree for <branch>, or the current one if
                       omitted (-f/--force to discard uncommitted changes)
