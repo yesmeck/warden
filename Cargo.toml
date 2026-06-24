@@ -1,0 +1,16 @@
+[package]
+name = "warden"
+version = "0.1.0"
+edition = "2021"
+description = "A git worktree warden — patrol, plant, and clear worktrees under one roof."
+license = "MIT"
+
+[[bin]]
+name = "warden"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
