@@ -20,7 +20,8 @@ cargo build --release && cp target/release/warden ~/.local/bin/
 warden <command> [args]
 
   new|n  [branch]     Create a worktree at <root>/<project>/<branch>
-                      (a random tree name is generated if you omit <branch>)
+                      (a random <adjective>-<tree> name, e.g. misty-cedar,
+                      is generated if you omit <branch>)
   cd     <branch>     Change to the worktree directory for <branch>
   list|ls             List worktrees for the current repository
   remove|rm <branch>  Remove the worktree for <branch>

@@ -26,6 +26,14 @@ const TREES: &[&str] = &[
     "chestnut", "ebony", "ginkgo", "holly", "laurel", "myrtle", "sandalwood",
 ];
 
+/// Adjectives paired with a tree name to mint a random branch.
+const ADJECTIVES: &[&str] = &[
+    "ancient", "misty", "golden", "silent", "wild", "hidden", "frozen", "shady", "lofty", "gnarled",
+    "whispering", "towering", "verdant", "crooked", "weathered", "sturdy", "fallen", "blooming",
+    "mossy", "twisted", "lonely", "evergreen", "windswept", "sunlit", "dusky", "hollow", "rustling",
+    "rooted", "leafy", "wandering", "tangled", "creaking", "drifting", "humble", "noble", "quiet",
+];
+
 /// Print an error to stderr and exit non-zero.
 fn die(msg: impl AsRef<str>) -> ! {
     eprintln!("warden: {}", msg.as_ref());
@@ -123,15 +131,16 @@ fn random_u64() -> u64 {
     h.finish()
 }
 
-/// Mint a branch name from a tree, avoiding existing branches and worktrees.
-/// Falls back to a `<tree>-<hex>` suffix once the bare names are exhausted.
+/// Mint an `<adjective>-<tree>` branch name, avoiding existing branches and
+/// worktrees. Falls back to an extra `-<hex>` suffix if collisions persist.
 fn generate_branch() -> String {
     for attempt in 0..64 {
+        let adj = ADJECTIVES[(random_u64() as usize) % ADJECTIVES.len()];
         let tree = TREES[(random_u64() as usize) % TREES.len()];
-        let candidate = if attempt < TREES.len() {
-            tree.to_string()
+        let candidate = if attempt < 32 {
+            format!("{adj}-{tree}")
         } else {
-            format!("{tree}-{:04x}", random_u64() & 0xffff)
+            format!("{adj}-{tree}-{:04x}", random_u64() & 0xffff)
         };
         let branch_ref = format!("refs/heads/{candidate}");
         let taken = git_check(&["show-ref", "--verify", "--quiet", &branch_ref])
