@@ -439,21 +439,37 @@ const SHELL_INIT: &str = r#"warden() {
 
 if [ -n "${ZSH_VERSION:-}" ]; then
 	_warden() {
-		local -a _subs
+		local -a _subs _branches
 		_subs=(new n cd list ls remove rm shell-init help)
 		if (( CURRENT == 2 )); then
-			compadd -- $_subs
-			return
+			compadd -a _subs
+			return 0
 		fi
 		case ${words[2]} in
-			rm|remove|cd)
-				local -a _branches
+			cd|rm|remove)
 				_branches=(${(f)"$(command warden __branches 2>/dev/null)"})
-				compadd -- $_branches
+				compadd -a _branches
+				# Return success even with no matches so zsh does not fall
+				# back to completing filenames in the current directory.
+				return 0
 				;;
 		esac
+		return 1
 	}
-	compdef _warden warden 2>/dev/null
+	# compdef exists only after compinit has run. If this is sourced earlier in
+	# the rc, defer the binding to the first prompt, by which point it is loaded.
+	if (( $+functions[compdef] )); then
+		compdef _warden warden
+	else
+		_warden_register() {
+			if (( $+functions[compdef] )); then
+				compdef _warden warden
+				add-zsh-hook -d precmd _warden_register
+				unfunction _warden_register
+			fi
+		}
+		autoload -Uz add-zsh-hook && add-zsh-hook precmd _warden_register
+	fi
 elif [ -n "${BASH_VERSION:-}" ]; then
 	_warden_bash() {
 		local cur="${COMP_WORDS[COMP_CWORD]}"
