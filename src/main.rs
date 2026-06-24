@@ -11,6 +11,7 @@
 //!   eval "$(warden shell-init)"
 
 use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
 use std::env;
 use std::hash::{BuildHasher, Hasher};
 use std::io;
@@ -131,9 +132,34 @@ fn random_u64() -> u64 {
     h.finish()
 }
 
-/// Mint an `<adjective>-<tree>` branch name, avoiding existing branches and
-/// worktrees. Falls back to an extra `-<hex>` suffix if collisions persist.
+/// Collect every branch name already in use — local heads, remote-tracking
+/// branches, and tags — so a generated name can't clash with any of them.
+fn used_branch_names() -> HashSet<String> {
+    let mut names = HashSet::new();
+    if let Some(out) = git_capture(&[
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+        "refs/remotes",
+        "refs/tags",
+    ]) {
+        for name in out.lines().map(str::trim).filter(|s| !s.is_empty()) {
+            names.insert(name.to_string());
+            // Also record the bare branch name behind a remote prefix
+            // (e.g. `origin/misty-cedar` -> `misty-cedar`).
+            if let Some((_, bare)) = name.split_once('/') {
+                names.insert(bare.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Mint an `<adjective>-<tree>` branch name that is not already in use by any
+/// branch (local or remote), tag, or worktree. Falls back to an extra `-<hex>`
+/// suffix if collisions persist.
 fn generate_branch() -> String {
+    let used = used_branch_names();
     for attempt in 0..64 {
         let adj = ADJECTIVES[(random_u64() as usize) % ADJECTIVES.len()];
         let tree = TREES[(random_u64() as usize) % TREES.len()];
@@ -142,10 +168,7 @@ fn generate_branch() -> String {
         } else {
             format!("{adj}-{tree}-{:04x}", random_u64() & 0xffff)
         };
-        let branch_ref = format!("refs/heads/{candidate}");
-        let taken = git_check(&["show-ref", "--verify", "--quiet", &branch_ref])
-            || worktree_path(&candidate).exists();
-        if !taken {
+        if !used.contains(&candidate) && !worktree_path(&candidate).exists() {
             return candidate;
         }
     }
