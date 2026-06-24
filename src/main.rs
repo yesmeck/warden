@@ -43,9 +43,9 @@ fn die(msg: impl AsRef<str>) -> ! {
     std::process::exit(1);
 }
 
-/// Worktree root directory: $WT_ROOT, else ~/.worktrees.
+/// Worktree root directory: $WARDEN_ROOT, else ~/.worktrees.
 fn worktree_root() -> PathBuf {
-    if let Some(root) = env::var_os("WT_ROOT").filter(|v| !v.is_empty()) {
+    if let Some(root) = env::var_os("WARDEN_ROOT").filter(|v| !v.is_empty()) {
         return PathBuf::from(root);
     }
     let home = env::var_os("HOME").unwrap_or_else(|| die("HOME is not set"));
@@ -544,7 +544,7 @@ Commands:
   shell-init          Print shell integration (directory changes + completion)
 
 Environment:
-  WT_ROOT   Worktree root directory (default: ~/.worktrees)
+  WARDEN_ROOT   Worktree root directory (default: ~/.worktrees)
 
 To enable directory changes from `new` and `cd`, add to your shell rc:
   eval "$(warden shell-init)"

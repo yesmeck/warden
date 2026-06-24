@@ -44,9 +44,9 @@ first position, and `rm`/`cd` complete the current repo's worktree branches.
 
 ## Environment
 
-| Variable  | Default        | Meaning                |
-| --------- | -------------- | ---------------------- |
-| `WT_ROOT` | `~/.worktrees` | Worktree root directory |
+| Variable        | Default        | Meaning                 |
+| --------------- | -------------- | ----------------------- |
+| `WARDEN_ROOT`   | `~/.worktrees` | Worktree root directory |
 
 ## License
 
