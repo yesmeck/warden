@@ -314,24 +314,54 @@ fn cmd_list(args: &[String]) {
     }
 }
 
+/// Print the branch names of this project's worktrees, one per line.
+/// These are exactly the valid targets for `rm` and `cd`; used by the shell
+/// completion emitted by `shell-init`.
+fn cmd_branches() {
+    let base = worktree_root().join(project_name());
+    let prefix = format!("{}/", base.to_string_lossy());
+    let Some(raw) = git_capture(&["worktree", "list", "--porcelain"]) else {
+        return;
+    };
+    for line in raw.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            if let Some(branch) = p.strip_prefix(&prefix).filter(|s| !s.is_empty()) {
+                println!("{branch}");
+            }
+        }
+    }
+}
+
 fn cmd_remove(args: &[String]) {
-    let branch = args.first().unwrap_or_else(|| die("remove: missing branch name"));
+    let force = args.iter().any(|a| a == "-f" || a == "--force");
+    let branch = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| die("remove: missing branch name"));
     let path = worktree_path(branch);
     if !path.exists() {
         die(format!("remove: no worktree at {}", path.display()));
     }
-    if !git_run(&["worktree", "remove", &path.to_string_lossy()]) {
-        die("remove: git worktree remove failed");
+
+    let path_str = path.to_string_lossy();
+    let mut git_args = vec!["worktree", "remove"];
+    if force {
+        // `--force` lets git remove a worktree with uncommitted changes.
+        git_args.push("--force");
+    }
+    git_args.push(&path_str);
+
+    if !git_run(&git_args) {
+        die("remove: git worktree remove failed (use --force to discard changes)");
     }
     println!("removed {}", path.display());
 }
 
-fn cmd_shell_init() {
-    // Emit a shell function that wraps this binary so `new` and `cd` can change
-    // the directory of the calling shell. Capture stdout (the path) and cd to it.
-    print!(
-        r#"warden() {{
-	case "${{1:-}}" in
+/// Shell integration: a wrapper function so `new`/`cd` change the calling
+/// shell's directory, plus tab-completion for subcommands and branch names
+/// (zsh and bash). Printed verbatim, so shell braces need no escaping.
+const SHELL_INIT: &str = r#"warden() {
+	case "${1:-}" in
 		new|n|cd)
 			local _w_dir
 			_w_dir="$(command warden "$@")" || return
@@ -341,9 +371,44 @@ fn cmd_shell_init() {
 			command warden "$@"
 			;;
 	esac
-}}
-"#
-    );
+}
+
+if [ -n "${ZSH_VERSION:-}" ]; then
+	_warden() {
+		local -a _subs
+		_subs=(new n cd list ls remove rm shell-init help)
+		if (( CURRENT == 2 )); then
+			compadd -- $_subs
+			return
+		fi
+		case ${words[2]} in
+			rm|remove|cd)
+				local -a _branches
+				_branches=(${(f)"$(command warden __branches 2>/dev/null)"})
+				compadd -- $_branches
+				;;
+		esac
+	}
+	compdef _warden warden 2>/dev/null
+elif [ -n "${BASH_VERSION:-}" ]; then
+	_warden_bash() {
+		local cur="${COMP_WORDS[COMP_CWORD]}"
+		if [ "$COMP_CWORD" -eq 1 ]; then
+			COMPREPLY=( $(compgen -W "new n cd list ls remove rm shell-init help" -- "$cur") )
+			return
+		fi
+		case "${COMP_WORDS[1]}" in
+			rm|remove|cd)
+				COMPREPLY=( $(compgen -W "$(command warden __branches 2>/dev/null)" -- "$cur") )
+				;;
+		esac
+	}
+	complete -F _warden_bash warden
+fi
+"#;
+
+fn cmd_shell_init() {
+    print!("{SHELL_INIT}");
 }
 
 fn usage() {
@@ -355,7 +420,7 @@ Commands:
                       (a tree name is generated when no branch is given)
   cd     <branch>     Change to the worktree directory for <branch>
   list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
-  remove|rm <branch>  Remove the worktree for <branch>
+  remove|rm <branch>  Remove the worktree for <branch> (-f/--force if dirty)
   shell-init          Print shell integration to enable `new`/`cd` directory changes
 
 Environment:
@@ -381,6 +446,7 @@ fn main() -> ExitCode {
         "list" | "ls" => cmd_list(rest),
         "remove" | "rm" => cmd_remove(rest),
         "shell-init" => cmd_shell_init(),
+        "__branches" => cmd_branches(),
         "-h" | "--help" | "help" => usage(),
         other => die(format!("unknown command: {other} (try 'warden help')")),
     }

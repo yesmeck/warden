@@ -37,6 +37,9 @@ shell's directory, install the wrapper function in your rc:
 eval "$(warden shell-init)"
 ```
 
+This also installs tab-completion (zsh and bash): subcommands complete at the
+first position, and `rm`/`cd` complete the current repo's worktree branches.
+
 If you miss typing `wt`, alias it:
 
 ```sh
