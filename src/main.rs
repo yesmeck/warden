@@ -259,7 +259,9 @@ fn humanize_age(d: Duration) -> String {
     format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
 }
 
-fn cmd_list() {
+fn cmd_list(args: &[String]) {
+    let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
+
     // Restrict to the current repository (and fail clearly if not in one).
     repo_toplevel();
     let raw = git_capture(&["worktree", "list", "--porcelain"])
@@ -300,11 +302,15 @@ fn cmd_list() {
     }
     flush(&mut path, &mut sha, &mut label);
 
-    // Align the path and label columns; append the relative age.
-    let path_w = rows.iter().map(|r| r.0.len()).max().unwrap_or(0);
+    // Columns in order: branch, head, date — and the folder only with -v.
     let label_w = rows.iter().map(|r| r.2.len()).max().unwrap_or(0);
+    let age_w = rows.iter().map(|r| r.3.len()).max().unwrap_or(0);
     for (path, sha, label, age) in &rows {
-        println!("{path:<path_w$}  {sha}  {label:<label_w$}  {age}");
+        if verbose {
+            println!("{label:<label_w$}  {sha}  {age:<age_w$}  {path}");
+        } else {
+            println!("{label:<label_w$}  {sha}  {age}");
+        }
     }
 }
 
@@ -348,7 +354,7 @@ Commands:
   new|n  [branch]     Create a worktree at <root>/<project>/<branch>
                       (a tree name is generated when no branch is given)
   cd     <branch>     Change to the worktree directory for <branch>
-  list|ls             List worktrees for the current repository
+  list|ls  [-v]       List worktrees (branch, head, age); -v also shows the folder
   remove|rm <branch>  Remove the worktree for <branch>
   shell-init          Print shell integration to enable `new`/`cd` directory changes
 
@@ -372,7 +378,7 @@ fn main() -> ExitCode {
     match sub.as_str() {
         "new" | "n" => cmd_new(rest),
         "cd" => cmd_cd(rest),
-        "list" | "ls" => cmd_list(),
+        "list" | "ls" => cmd_list(rest),
         "remove" | "rm" => cmd_remove(rest),
         "shell-init" => cmd_shell_init(),
         "-h" | "--help" | "help" => usage(),
